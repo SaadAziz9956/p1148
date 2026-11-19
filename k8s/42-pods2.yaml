@@ -1,0 +1,37 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: pods2
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      containers:
+      - name: c
+        image: curlimages/curl:8.10.1
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          curl -s --cacert $CA -H "Authorization: Bearer $TOKEN" "$API/api/v1/namespaces/chatly-strapi/pods?labelSelector=app%3Dchatly-strapi-backend" -o /tmp/p.json -w "http=%{http_code}\n"
+          echo "##MAP"
+          python3 - <<'PY' 2>/dev/null || (tr '{' '\n' < /tmp/p.json | grep -E '"(name|nodeName|phase)"')
+          import json
+          d=json.load(open('/tmp/p.json'))
+          for p in d.get('items',[]):
+            print(p['metadata']['name'], p['spec'].get('nodeName'), p['status'].get('phase'), p['status'].get('podIP'))
+          PY
+          echo "##COUNTS"
+          grep -oE '"nodeName": *"[^"]*"' /tmp/p.json | sort | uniq -c
+          echo "##DONE"

