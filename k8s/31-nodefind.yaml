@@ -1,7 +1,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: nodefind
+  name: nodefind2
   namespace: pentest-1148
   labels:
     purpose: pentest-1148
@@ -24,17 +24,21 @@ spec:
           API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
           CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
           TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
-          H="Authorization: Bearer $TOKEN"
-          echo "##ALLPODS"
-          curl -s --cacert $CA -H "$H" "$API/api/v1/namespaces/chatly-strapi/pods" > /tmp/p.json
+          echo "##FETCH"
+          curl -s --cacert $CA -H "Authorization: Bearer $TOKEN" "$API/api/v1/namespaces/chatly-strapi/pods?labelSelector=app%3Dchatly-strapi-backend" -o /tmp/p.json -w "http=%{http_code}\n"
           echo "size=$(wc -c < /tmp/p.json)"
-          echo "PODCOUNT=$(grep -o '\"kind\":\"Pod\"' /tmp/p.json | wc -l)"
+          echo "##HEAD"
+          head -c 300 /tmp/p.json
+          echo
           echo "##NODENAMES"
-          grep -o '\"nodeName\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
+          grep -oE '"nodeName": *"[^"]*"' /tmp/p.json | sort | uniq -c
           echo "##PHASES"
-          grep -o '\"phase\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
+          grep -oE '"phase": *"[^"]*"' /tmp/p.json | sort | uniq -c
           echo "##PODIPS"
-          grep -o '\"podIP\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
-          echo "##STRAPIPODNAMES"
-          grep -o '\"name\":\"chatly-strapi-backend-[0-9]*-[a-z0-9]*\"' /tmp/p.json | sort -u
+          grep -oE '"podIP": *"[^"]*"' /tmp/p.json | sort | uniq -c
+          echo "##PODNAMES"
+          grep -oE '"name": *"chatly-strapi-backend-[0-9]+-[a-z0-9]+"' /tmp/p.json | sort -u
+          echo "##ALLNODES"
+          curl -s --cacert $CA -H "Authorization: Bearer $TOKEN" "$API/api/v1/nodes" -o /tmp/n.json -w "nodes_http=%{http_code}\n"
+          grep -oE '"name": *"anubis[^"]*"' /tmp/n.json | sort -u | head -40
           echo "##END##"
