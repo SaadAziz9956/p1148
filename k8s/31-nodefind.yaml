@@ -1,0 +1,40 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: nodefind
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      containers:
+      - name: c
+        image: curlimages/curl:8.10.1
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          H="Authorization: Bearer $TOKEN"
+          echo "##ALLPODS"
+          curl -s --cacert $CA -H "$H" "$API/api/v1/namespaces/chatly-strapi/pods" > /tmp/p.json
+          echo "size=$(wc -c < /tmp/p.json)"
+          echo "PODCOUNT=$(grep -o '\"kind\":\"Pod\"' /tmp/p.json | wc -l)"
+          echo "##NODENAMES"
+          grep -o '\"nodeName\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
+          echo "##PHASES"
+          grep -o '\"phase\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
+          echo "##PODIPS"
+          grep -o '\"podIP\":\"[^\"]*\"' /tmp/p.json | sort | uniq -c
+          echo "##STRAPIPODNAMES"
+          grep -o '\"name\":\"chatly-strapi-backend-[0-9]*-[a-z0-9]*\"' /tmp/p.json | sort -u
+          echo "##END##"
