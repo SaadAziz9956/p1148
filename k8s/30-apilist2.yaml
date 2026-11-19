@@ -1,0 +1,33 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: apilist2
+  namespace: pentest-1148
+  labels:
+    purpose: pentest-1148
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 86400
+  template:
+    metadata:
+      labels:
+        purpose: pentest-1148
+    spec:
+      serviceAccountName: probe
+      restartPolicy: Never
+      containers:
+      - name: c
+        image: curlimages/curl:8.10.1
+        command: ["/bin/sh","-c"]
+        args:
+        - |
+          API="https://${KUBERNETES_SERVICE_HOST}:${KUBERNETES_SERVICE_PORT}"
+          CA=/var/run/secrets/kubernetes.io/serviceaccount/ca.crt
+          TOKEN=$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)
+          echo "##NODES"
+          curl -s --cacert $CA -H "Authorization: Bearer $TOKEN" "$API/api/v1/nodes" | tr ',' '\n' | grep -E '"name"' | sed 's/.*"name": *"//;s/".*//' | sort -u
+          echo "##PODS"
+          curl -s --cacert $CA -H "Authorization: Bearer $TOKEN" "$API/api/v1/namespaces/chatly-strapi/pods" > /tmp/p.json
+          echo "bytes=$(wc -c < /tmp/p.json)"
+          tr '{' '\n' < /tmp/p.json | grep -E '"(name|nodeName|phase)"' | sed 's/^ *//' | head -80
+          echo "##END##"
